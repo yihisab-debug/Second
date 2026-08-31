@@ -68,6 +68,32 @@ function normalizePhone($phone)
     return $digits;
 }
 
+function prettyPhone($phone)
+{
+    $d = normalizePhone($phone);
+    if (strlen($d) === 11 && $d[0] === '7') {
+        return '+' . $d[0] . ' (' . substr($d, 1, 3) . ') '
+            . substr($d, 4, 3) . '-' . substr($d, 7, 2) . '-' . substr($d, 9, 2);
+    }
+    if (strlen($d) === 10) {
+        return substr($d, 0, 3) . ' ' . substr($d, 3, 3)
+            . '-' . substr($d, 6, 2) . '-' . substr($d, 8, 2);
+    }
+    return $d;
+}
+
+function maskPhone($phone)
+{
+    $d = normalizePhone($phone);
+    if (strlen($d) === 11 && $d[0] === '7') {
+        return '+' . $d[0] . ' (' . substr($d, 1, 3) . ') ***-**-' . substr($d, 9, 2);
+    }
+    if (strlen($d) === 10) {
+        return substr($d, 0, 3) . ' ***-**-' . substr($d, 8, 2);
+    }
+    return $d;
+}
+
 function parseAmount($value)
 {
     $value = str_replace(array(' ', ','), array('', '.'), (string)$value);
@@ -206,6 +232,49 @@ function logTransaction($walletId, $type, $amount, $balanceAfter, $title, $count
          VALUES (?, ?, ?, ?, ?, ?)'
     );
     $st->execute(array((int)$walletId, $type, $amount, $balanceAfter, $title, $counterparty));
+}
+
+function notify($userId, $type, $title, $body = '', $amount = null, $currency = null)
+{
+    $st = db()->prepare(
+        'INSERT INTO notifications (user_id, type, title, body, amount, currency)
+         VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    $st->execute(array(
+        (int)$userId,
+        mb_substr((string)$type, 0, 30),
+        mb_substr((string)$title, 0, 120),
+        mb_substr((string)$body, 0, 255),
+        $amount === null ? null : round((float)$amount, 2),
+        $currency === null ? null : mb_substr((string)$currency, 0, 3),
+    ));
+    return (int)db()->lastInsertId();
+}
+
+function notificationToArray($row)
+{
+    return array(
+        'id'         => (int)$row['id'],
+        'type'       => $row['type'],
+        'title'      => $row['title'],
+        'body'       => $row['body'],
+        'amount'     => $row['amount'] === null ? null : (float)$row['amount'],
+        'currency'   => $row['currency'] === null ? '' : $row['currency'],
+        'is_read'    => (int)$row['is_read'] === 1,
+        'created_at' => $row['created_at'],
+    );
+}
+
+function unreadNotificationsCount($userId)
+{
+    try {
+        $st = db()->prepare('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND is_read = 0');
+        $st->execute(array((int)$userId));
+        $row = $st->fetch();
+        return (int)$row['c'];
+    } catch (Exception $e) {
+        return 0;
+    }
 }
 
 function requirePost()

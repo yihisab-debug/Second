@@ -30,6 +30,10 @@ class Api {
   static const String transfer = 'transfer.php';
   static const String history = 'history.php';
   static const String findWallet = 'find_wallet.php';
+  static const String findUser = 'find_user.php';
+  static const String transferPhone = 'transfer_phone.php';
+  static const String notifications = 'notifications.php';
+  static const String notificationsRead = 'notifications_read.php';
 
   static Future<Map<String, dynamic>> call(
     String endpoint, [

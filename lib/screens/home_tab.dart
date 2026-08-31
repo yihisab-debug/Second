@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
@@ -9,6 +11,7 @@ import '../widgets/app_widgets.dart';
 import '../widgets/transaction_tile.dart';
 import '../widgets/wallet_card.dart';
 import 'deposit_screen.dart';
+import 'notifications_screen.dart';
 import 'transfer_screen.dart';
 import 'wallet_create_screen.dart';
 import 'withdraw_screen.dart';
@@ -31,14 +34,20 @@ class _HomeTabState extends State<HomeTab> {
   String _error = '';
   int _page = 0;
 
+  int _unread = 0;
+
+  Timer? _poll;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _poll = Timer.periodic(const Duration(seconds: 20), (_) => _checkUnread());
   }
 
   @override
   void dispose() {
+    _poll?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -60,6 +69,7 @@ class _HomeTabState extends State<HomeTab> {
       setState(() {
         _wallets = Wallet.listFrom(data['wallets']);
         _transactions = TxItem.listFrom(data['transactions']);
+        _unread = int.tryParse('${data['unread'] ?? 0}') ?? 0;
         _loading = false;
         if (_page >= _wallets.length) _page = 0;
       });
@@ -70,6 +80,59 @@ class _HomeTabState extends State<HomeTab> {
         _error = e.message;
       });
     }
+  }
+
+  Future<void> _checkUnread() async {
+    if (!mounted || Session.token == null) return;
+
+    try {
+      final data = await Api.call(Api.notifications, {'limit': '1'});
+      final unread = int.tryParse('${data['unread'] ?? 0}') ?? 0;
+      if (!mounted) return;
+
+      final isNew = unread > _unread;
+      setState(() => _unread = unread);
+
+      if (isNew) {
+        final list = AppNotification.listFrom(data['notifications']);
+        final text = list.isEmpty
+            ? 'Вам поступил перевод'
+            : (list.first.hasAmount
+                ? 'Пополнение: +${formatMoney(list.first.amount, list.first.currency)}'
+                : list.first.title);
+
+        _load();
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(text),
+              backgroundColor: AppColors.income,
+              behavior: SnackBarBehavior.floating,
+              margin: const EdgeInsets.all(16),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              action: SnackBarAction(
+                label: 'Открыть',
+                textColor: Colors.white,
+                onPressed: _openNotifications,
+              ),
+            ),
+          );
+      }
+    } on ApiException {
+      return;
+    }
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+    );
+    if (mounted) _load();
   }
 
   Wallet? get _current {
@@ -132,7 +195,7 @@ class _HomeTabState extends State<HomeTab> {
                 onAction: widget.onOpenHistory,
               ),
             ),
-            
+
             if (_transactions.isEmpty)
               const EmptyState(
                 icon: Icons.receipt_long_outlined,
@@ -230,8 +293,56 @@ class _HomeTabState extends State<HomeTab> {
             ],
           ),
 
+          const SizedBox(width: 4),
+
+          _bell(),
+
         ],
       ),
+    );
+  }
+
+  Widget _bell() {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+
+        IconButton(
+          tooltip: 'Уведомления',
+          onPressed: _openNotifications,
+          icon: Icon(
+            _unread > 0
+                ? Icons.notifications_active_rounded
+                : Icons.notifications_none_rounded,
+            color: _unread > 0 ? AppColors.primary : AppColors.textMuted,
+          ),
+        ),
+
+        if (_unread > 0)
+          Positioned(
+            right: 4,
+            top: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 17),
+              decoration: BoxDecoration(
+                color: AppColors.expense,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: Text(
+                _unread > 9 ? '9+' : '$_unread',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+
+      ],
     );
   }
 
@@ -415,7 +526,7 @@ class _HomeTabState extends State<HomeTab> {
                   color: AppColors.text,
                 ),
               ),
-              
+
             ],
           ),
         ),

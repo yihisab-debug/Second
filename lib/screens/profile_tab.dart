@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/format.dart';
+import '../core/phone.dart';
 import '../core/session.dart';
 import '../core/theme.dart';
 import '../models/models.dart';
@@ -46,6 +47,12 @@ class _ProfileTabState extends State<ProfileTab> {
     await Clipboard.setData(ClipboardData(text: number));
     if (!mounted) return;
     showMessage(context, 'Номер счёта скопирован');
+  }
+
+  Future<void> _copyPhone() async {
+    await Clipboard.setData(ClipboardData(text: formatPhone(Session.phone)));
+    if (!mounted) return;
+    showMessage(context, 'Номер телефона скопирован');
   }
 
   Future<void> _changePin() async {
@@ -149,15 +156,98 @@ class _ProfileTabState extends State<ProfileTab> {
 
                     const SizedBox(height: 2),
 
-                    Text(
-                      '+${Session.phone}',
-                      style: const TextStyle(color: AppColors.textMuted),
+                    GestureDetector(
+                      onTap: _copyPhone,
+
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+
+                          Text(
+                            formatPhone(Session.phone),
+                            style: const TextStyle(color: AppColors.textMuted),
+                          ),
+
+                          const SizedBox(width: 6),
+
+                          const Icon(
+                            Icons.copy_rounded,
+                            size: 14,
+                            color: AppColors.primary,
+                          ),
+
+                        ],
+                      ),
                     ),
 
                   ],
                 ),
               ),
             ],
+          ),
+
+          const SizedBox(height: 20),
+
+          AppCard(
+            child: Row(
+              children: [
+
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(
+                    Icons.phone_iphone_rounded,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+
+                      const Text(
+                        'Номер для переводов',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+
+                      const SizedBox(height: 2),
+
+                      Text(
+                        formatPhone(Session.phone),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                        ),
+                      ),
+
+                    ],
+                  ),
+                ),
+
+                IconButton(
+                  tooltip: 'Скопировать номер телефона',
+                  onPressed: _copyPhone,
+                  icon: const Icon(
+                    Icons.copy_rounded,
+                    color: AppColors.primary,
+                    size: 20,
+                  ),
+                ),
+
+              ],
+            ),
           ),
 
           const SizedBox(height: 24),
@@ -306,7 +396,7 @@ class _ProfileTabState extends State<ProfileTab> {
               ),
             ),
           ),
-          
+
         ],
       ),
     );

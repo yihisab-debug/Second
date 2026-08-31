@@ -18,7 +18,7 @@ if ($number === $from['number']) {
 $pdo = db();
 
 $st = $pdo->prepare(
-    'SELECT w.*, u.full_name FROM wallets w
+    'SELECT w.*, u.full_name, u.id AS owner_id, u.phone AS owner_phone FROM wallets w
      JOIN users u ON u.id = w.user_id
      WHERE w.number = ?'
 );
@@ -63,6 +63,23 @@ try {
 
     logTransaction((int)$from['id'], 'transfer_out', $amount, $fromAfter, $title, $to['full_name']);
     logTransaction((int)$to['id'], 'transfer_in', $amount, $toAfter, $title, $user['full_name']);
+
+    if ((int)$to['owner_id'] !== (int)$user['id']) {
+        $notifyBody = 'От: ' . $user['full_name'] . ' · ' . maskPhone($user['phone'])
+            . ' · счёт «' . $to['title'] . '»';
+        if ($comment !== '') {
+            $notifyBody .= ' · ' . mb_substr($comment, 0, 60);
+        }
+
+        notify(
+            (int)$to['owner_id'],
+            'transfer_in',
+            'Пополнение счёта',
+            $notifyBody,
+            $amount,
+            $to['currency']
+        );
+    }
 
     $pdo->commit();
 } catch (Exception $e) {

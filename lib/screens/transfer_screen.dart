@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/api.dart';
 import '../core/format.dart';
+import '../core/phone.dart';
 import '../core/theme.dart';
 import '../models/models.dart';
 import '../widgets/app_widgets.dart';
@@ -46,14 +49,22 @@ class TransferScreen extends StatefulWidget {
 }
 
 class _TransferScreenState extends State<TransferScreen> {
+  final _phoneController = TextEditingController();
   final _numberController = TextEditingController();
   final _amountController = TextEditingController();
   final _commentController = TextEditingController();
 
   late Wallet _wallet;
+
+  bool _byPhone = true;
   bool _loading = false;
   bool _checking = false;
-  String _recipient = '';
+
+  Recipient? _recipient;
+  String _lookupError = '';
+  String _cardOwner = '';
+
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -63,32 +74,89 @@ class _TransferScreenState extends State<TransferScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _phoneController.dispose();
     _numberController.dispose();
     _amountController.dispose();
     _commentController.dispose();
     super.dispose();
   }
 
-  String get _digits => _numberController.text.replaceAll(RegExp(r'\D'), '');
+  String get _phone => normalizePhone(_phoneController.text);
 
-  Future<void> _findRecipient() async {
-    if (_digits.length != 16) {
+  String get _cardDigits => _numberController.text.replaceAll(RegExp(r'\D'), '');
+
+  void _resetRecipient() {
+    if (_recipient != null || _lookupError.isNotEmpty || _cardOwner.isNotEmpty) {
+      setState(() {
+        _recipient = null;
+        _lookupError = '';
+        _cardOwner = '';
+      });
+    }
+  }
+
+  void _onPhoneChanged(String _) {
+    _debounce?.cancel();
+    _resetRecipient();
+
+    if (_phone.length >= phoneMinLength) {
+      _debounce = Timer(const Duration(milliseconds: 500), _findByPhone);
+    }
+  }
+
+  Future<void> _findByPhone() async {
+    if (_phone.length < phoneMinLength) {
+      setState(() => _lookupError = 'Введите номер полностью');
+      return;
+    }
+
+    setState(() {
+      _checking = true;
+      _recipient = null;
+      _lookupError = '';
+    });
+
+    try {
+      final data = await Api.call(Api.findUser, {'phone': _phone});
+      if (!mounted) return;
+      setState(() => _recipient = Recipient.fromJson(data));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _recipient = null;
+        _lookupError = e.message;
+      });
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _copyPhone(String phone) async {
+    await Clipboard.setData(ClipboardData(text: phone));
+    if (!mounted) return;
+    showMessage(context, 'Номер телефона скопирован');
+  }
+
+  Future<void> _findByCard() async {
+    if (_cardDigits.length != 16) {
       showMessage(context, 'Номер счёта состоит из 16 цифр', error: true);
       return;
     }
 
     setState(() {
       _checking = true;
-      _recipient = '';
+      _cardOwner = '';
+      _lookupError = '';
     });
 
     try {
-      final data = await Api.call(Api.findWallet, {'number': _digits});
+      final data = await Api.call(Api.findWallet, {'number': _cardDigits});
       if (!mounted) return;
-      setState(() => _recipient = '${data['full_name'] ?? ''}');
+      setState(() => _cardOwner = '${data['full_name'] ?? ''}');
     } on ApiException catch (e) {
       if (!mounted) return;
-      showMessage(context, e.message, error: true);
+      setState(() => _lookupError = e.message);
     } finally {
       if (mounted) setState(() => _checking = false);
     }
@@ -97,10 +165,40 @@ class _TransferScreenState extends State<TransferScreen> {
   Future<void> _submit() async {
     final amount = double.tryParse(_amountController.text.replaceAll(',', '.'));
 
-    if (_digits.length != 16) {
-      showMessage(context, 'Введите 16 цифр номера счёта получателя', error: true);
-      return;
+    if (_byPhone) {
+      if (_phone.length < phoneMinLength) {
+        showMessage(context, 'Введите номер телефона получателя', error: true);
+        return;
+      }
+      if (_recipient == null) {
+        showMessage(
+          context,
+          _lookupError.isEmpty
+              ? 'Сначала проверьте номер получателя'
+              : _lookupError,
+          error: true,
+        );
+        return;
+      }
+      if (!_recipient!.supports(_wallet.currency)) {
+        showMessage(
+          context,
+          'У получателя нет счёта в валюте ${_wallet.currency}',
+          error: true,
+        );
+        return;
+      }
+    } else {
+      if (_cardDigits.length != 16) {
+        showMessage(
+          context,
+          'Введите 16 цифр номера счёта получателя',
+          error: true,
+        );
+        return;
+      }
     }
+
     if (amount == null || amount <= 0) {
       showMessage(context, 'Введите сумму перевода', error: true);
       return;
@@ -114,7 +212,51 @@ class _TransferScreenState extends State<TransferScreen> {
       return;
     }
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await _confirmDialog(amount);
+    if (confirmed != true) return;
+
+    setState(() => _loading = true);
+
+    try {
+      final Map<String, dynamic> data;
+
+      if (_byPhone) {
+        data = await Api.call(Api.transferPhone, {
+          'wallet_id': '${_wallet.id}',
+          'to_phone': _phone,
+          'amount': '$amount',
+          'comment': _commentController.text.trim(),
+        });
+      } else {
+        data = await Api.call(Api.transfer, {
+          'wallet_id': '${_wallet.id}',
+          'to_number': _cardDigits,
+          'amount': '$amount',
+          'comment': _commentController.text.trim(),
+        });
+      }
+
+      final to = '${data['recipient'] ?? ''}';
+
+      if (!mounted) return;
+      popWithMessage(
+        context,
+        'Перевод ${formatMoney(amount, _wallet.currency)} '
+        '${to.isEmpty ? 'выполнен' : 'отправлен: $to'}',
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showMessage(context, e.message, error: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<bool?> _confirmDialog(double amount) {
+    final target = _byPhone ? formatPhone(_phone) : formatCardNumber(_cardDigits);
+    final name = _byPhone ? (_recipient?.fullName ?? '') : _cardOwner;
+
+    return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -128,13 +270,13 @@ class _TransferScreenState extends State<TransferScreen> {
 
             const SizedBox(height: 6),
 
-            Text('Счёт получателя: ${formatCardNumber(_digits)}'),
+            Text(_byPhone ? 'Телефон: $target' : 'Счёт получателя: $target'),
 
-            if (_recipient.isNotEmpty) ...[
+            if (name.isNotEmpty) ...[
 
               const SizedBox(height: 6),
 
-              Text('Получатель: $_recipient'),
+              Text('Получатель: $name'),
 
             ],
           ],
@@ -158,33 +300,6 @@ class _TransferScreenState extends State<TransferScreen> {
 
       ),
     );
-
-    if (confirmed != true) return;
-
-    setState(() => _loading = true);
-
-    try {
-      final data = await Api.call(Api.transfer, {
-        'wallet_id': '${_wallet.id}',
-        'to_number': _digits,
-        'amount': '$amount',
-        'comment': _commentController.text.trim(),
-      });
-
-      final to = '${data['recipient'] ?? ''}';
-
-      if (!mounted) return;
-      popWithMessage(
-        context,
-        'Перевод ${formatMoney(amount, _wallet.currency)} '
-        '${to.isEmpty ? 'выполнен' : 'отправлен: $to'}',
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      showMessage(context, e.message, error: true);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
   }
 
   @override
@@ -204,95 +319,32 @@ class _TransferScreenState extends State<TransferScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
 
+              _modeSwitch(),
+
+              const SizedBox(height: 20),
+
               WalletSelector(
                 wallets: widget.wallets,
                 selected: _wallet,
                 label: 'Счёт списания',
                 onChanged: (w) => setState(() {
                   _wallet = w;
-                  _recipient = '';
                 }),
               ),
 
               const SizedBox(height: 20),
 
-              const Text(
-                'Счёт получателя',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
-                ),
-              ),
+              _fieldLabel(_byPhone ? 'Телефон получателя' : 'Счёт получателя'),
 
               const SizedBox(height: 8),
 
-              TextField(
-                controller: _numberController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [CardNumberInputFormatter()],
-                onChanged: (_) {
-                  if (_recipient.isNotEmpty) setState(() => _recipient = '');
-                },
-                decoration: InputDecoration(
-                  hintText: '4400 0000 0000 0000',
-                  prefixIcon: const Icon(Icons.credit_card),
-                  suffixIcon: _checking
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : IconButton(
-                          tooltip: 'Проверить счёт',
-                          icon: const Icon(Icons.search),
-                          onPressed: _findRecipient,
-                        ),
-                ),
-              ),
+              if (_byPhone) _phoneField() else _cardField(),
 
-              if (_recipient.isNotEmpty) ...[
+              _recipientBlock(),
 
-                const SizedBox(height: 10),
-
-                AppCard(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-
-                      const Icon(Icons.check_circle,
-                          color: AppColors.income, size: 20),
-
-                      const SizedBox(width: 10),
-
-                      Expanded(
-                        child: Text(
-                          'Получатель: $_recipient',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.text,
-                          ),
-                        ),
-                      ),
-
-                    ],
-                  ),
-                ),
-              ],
-              
               const SizedBox(height: 20),
 
-              const Text(
-                'Сумма',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textMuted,
-                ),
-              ),
+              _fieldLabel('Сумма'),
 
               const SizedBox(height: 8),
 
@@ -340,19 +392,260 @@ class _TransferScreenState extends State<TransferScreen> {
 
               const SizedBox(height: 12),
 
-              const Text(
-                'Перевод проходит между счетами в одной валюте. '
-                'Номер своего счёта можно посмотреть в профиле.',
+              Text(
+                _byPhone
+                    ? 'Деньги придут на счёт получателя в валюте ${_wallet.currency}. '
+                        'Получателю сразу придёт уведомление о пополнении.'
+                    : 'Перевод проходит между счетами в одной валюте. '
+                        'Номер своего счёта можно посмотреть в профиле.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 12.5,
                   color: AppColors.textMuted,
                   height: 1.4,
                 ),
               ),
-              
+
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fieldLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        color: AppColors.textMuted,
+      ),
+    );
+  }
+
+  Widget _modeSwitch() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.divider),
+      ),
+
+      child: Row(
+        children: [
+
+          _modeTab('По телефону', Icons.phone_iphone_rounded, true),
+
+          _modeTab('По номеру счёта', Icons.credit_card, false),
+
+        ],
+      ),
+    );
+  }
+
+  Widget _modeTab(String label, IconData icon, bool phoneMode) {
+    final active = _byPhone == phoneMode;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (_byPhone == phoneMode) return;
+          _debounce?.cancel();
+          setState(() {
+            _byPhone = phoneMode;
+            _recipient = null;
+            _lookupError = '';
+            _cardOwner = '';
+          });
+        },
+
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          decoration: BoxDecoration(
+            color: active ? AppColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+          ),
+
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+
+              Icon(
+                icon,
+                size: 17,
+                color: active ? Colors.white : AppColors.textMuted,
+              ),
+
+              const SizedBox(width: 6),
+
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: active ? Colors.white : AppColors.textMuted,
+                  ),
+                ),
+              ),
+
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _suffix(VoidCallback onSearch) {
+    if (_checking) {
+      return const Padding(
+        padding: EdgeInsets.all(14),
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    return IconButton(
+      tooltip: 'Проверить получателя',
+      icon: const Icon(Icons.search),
+      onPressed: onSearch,
+    );
+  }
+
+  Widget _phoneField() {
+    return TextField(
+      controller: _phoneController,
+      keyboardType: TextInputType.phone,
+      inputFormatters: [PhoneInputFormatter()],
+      onChanged: _onPhoneChanged,
+      decoration: InputDecoration(
+        hintText: '707 123-45-67',
+        prefixIcon: const Icon(Icons.phone_iphone_rounded),
+        suffixIcon: _suffix(_findByPhone),
+      ),
+    );
+  }
+
+  Widget _cardField() {
+    return TextField(
+      controller: _numberController,
+      keyboardType: TextInputType.number,
+      inputFormatters: [CardNumberInputFormatter()],
+      onChanged: (_) => _resetRecipient(),
+      decoration: InputDecoration(
+        hintText: '4400 0000 0000 0000',
+        prefixIcon: const Icon(Icons.credit_card),
+        suffixIcon: _suffix(_findByCard),
+      ),
+    );
+  }
+
+  Widget _recipientBlock() {
+    if (_lookupError.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: AppCard(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+
+              const Icon(Icons.error_outline,
+                  color: AppColors.expense, size: 20),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: Text(
+                  _lookupError,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.expense,
+                  ),
+                ),
+              ),
+
+            ],
+          ),
+        ),
+      );
+    }
+
+    final name = _byPhone ? (_recipient?.fullName ?? '') : _cardOwner;
+    if (name.isEmpty) return const SizedBox.shrink();
+
+    final wrongCurrency =
+        _byPhone && _recipient != null && !_recipient!.supports(_wallet.currency);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: AppCard(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+
+            Icon(
+              wrongCurrency ? Icons.warning_amber_rounded : Icons.check_circle,
+              color: wrongCurrency ? AppColors.accent : AppColors.income,
+              size: 20,
+            ),
+
+            const SizedBox(width: 10),
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+
+                  Text(
+                    'Получатель: $name',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+
+                  if (_byPhone && _recipient != null) ...[
+
+                    const SizedBox(height: 2),
+
+                    Text(
+                      wrongCurrency
+                          ? 'Нет счёта в валюте ${_wallet.currency}'
+                          : _recipient!.phonePretty,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: wrongCurrency
+                            ? AppColors.accent
+                            : AppColors.textMuted,
+                      ),
+                    ),
+
+                  ],
+                ],
+              ),
+            ),
+
+            if (_byPhone && _recipient != null)
+              IconButton(
+                tooltip: 'Скопировать номер телефона',
+                onPressed: () => _copyPhone(_recipient!.phonePretty),
+                icon: const Icon(
+                  Icons.copy_rounded,
+                  color: AppColors.primary,
+                  size: 18,
+                ),
+              ),
+
+          ],
         ),
       ),
     );

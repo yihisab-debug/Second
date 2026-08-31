@@ -64,6 +64,82 @@ class Wallet {
   }
 }
 
+class Recipient {
+  final int userId;
+  final String fullName;
+  final String phone;
+  final String phonePretty;
+  final List<String> currencies;
+
+  Recipient({
+    required this.userId,
+    required this.fullName,
+    required this.phone,
+    required this.phonePretty,
+    required this.currencies,
+  });
+
+  bool supports(String currency) => currencies.contains(currency.toUpperCase());
+
+  factory Recipient.fromJson(Map<String, dynamic> json) {
+    final raw = json['currencies'];
+    return Recipient(
+      userId: _toInt(json['user_id']),
+      fullName: '${json['full_name'] ?? ''}',
+      phone: '${json['phone'] ?? ''}',
+      phonePretty: '${json['phone_pretty'] ?? ''}',
+      currencies: raw is List
+          ? raw.map((e) => '$e'.toUpperCase()).toList()
+          : <String>[],
+    );
+  }
+}
+
+class AppNotification {
+  final int id;
+  final String type;
+  final String title;
+  final String body;
+  final double amount;
+  final String currency;
+  final bool isRead;
+  final String createdAt;
+
+  AppNotification({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.amount,
+    required this.currency,
+    required this.isRead,
+    required this.createdAt,
+  });
+
+  bool get isIncome => type == 'transfer_in' || type == 'deposit';
+  bool get hasAmount => amount > 0;
+
+  factory AppNotification.fromJson(Map<String, dynamic> json) =>
+      AppNotification(
+        id: _toInt(json['id']),
+        type: '${json['type'] ?? 'info'}',
+        title: '${json['title'] ?? ''}',
+        body: '${json['body'] ?? ''}',
+        amount: _toDouble(json['amount']),
+        currency: '${json['currency'] ?? 'KZT'}',
+        isRead: json['is_read'] == true,
+        createdAt: '${json['created_at'] ?? ''}',
+      );
+
+  static List<AppNotification> listFrom(dynamic raw) {
+    if (raw is! List) return <AppNotification>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map((item) => AppNotification.fromJson(item))
+        .toList();
+  }
+}
+
 class TxItem {
   final int id;
   final int walletId;

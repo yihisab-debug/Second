@@ -28,4 +28,5 @@ jsonOut(200, 'OK', array(
     ),
     'wallets'      => $wallets,
     'transactions' => $transactions,
+    'unread'       => unreadNotificationsCount((int)$user['id']),
 ));
