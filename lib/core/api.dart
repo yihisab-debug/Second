@@ -35,6 +35,11 @@ class Api {
   static const String notifications = 'notifications.php';
   static const String notificationsRead = 'notifications_read.php';
 
+  static const String creditors = 'creditors.php';
+  static const String credits = 'credits.php';
+  static const String creditCreate = 'credit_create.php';
+  static const String creditPay = 'credit_pay.php';
+
   static Future<Map<String, dynamic>> call(
     String endpoint, [
     Map<String, String> body = const <String, String>{},

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import 'credits_tab.dart';
 import 'history_tab.dart';
 import 'home_tab.dart';
 import 'profile_tab.dart';
@@ -25,6 +26,9 @@ class _MainShellState extends State<MainShell> {
         body = const HistoryTab();
         break;
       case 2:
+        body = const CreditsTab();
+        break;
+      case 3:
         body = const ProfileTab();
         break;
       default:
@@ -67,11 +71,18 @@ class _MainShellState extends State<MainShell> {
               ),
 
               NavigationDestination(
+                icon: Icon(Icons.account_balance_outlined),
+                selectedIcon:
+                    Icon(Icons.account_balance, color: AppColors.primary),
+                label: 'Кредиты',
+              ),
+
+              NavigationDestination(
                 icon: Icon(Icons.person_outline),
                 selectedIcon: Icon(Icons.person, color: AppColors.primary),
                 label: 'Профиль',
               ),
-              
+
             ],
           ),
         ),
