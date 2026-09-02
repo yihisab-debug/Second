@@ -40,6 +40,11 @@ class Api {
   static const String creditCreate = 'credit_create.php';
   static const String creditPay = 'credit_pay.php';
 
+  static const String depositProducts = 'deposit_products.php';
+  static const String deposits = 'deposits.php';
+  static const String depositOpen = 'deposit_open.php';
+  static const String depositClose = 'deposit_close.php';
+
   static Future<Map<String, dynamic>> call(
     String endpoint, [
     Map<String, String> body = const <String, String>{},

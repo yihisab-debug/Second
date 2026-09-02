@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import 'credits_tab.dart';
+import 'deposits_tab.dart';
 import 'history_tab.dart';
 import 'home_tab.dart';
 import 'profile_tab.dart';
@@ -29,6 +30,9 @@ class _MainShellState extends State<MainShell> {
         body = const CreditsTab();
         break;
       case 3:
+        body = const DepositsTab();
+        break;
+      case 4:
         body = const ProfileTab();
         break;
       default:
@@ -48,7 +52,7 @@ class _MainShellState extends State<MainShell> {
             backgroundColor: Colors.white,
             indicatorColor: AppColors.primary.withValues(alpha: 0.1),
             labelTextStyle: WidgetStateProperty.all(
-              const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
             ),
           ),
 
@@ -75,6 +79,12 @@ class _MainShellState extends State<MainShell> {
                 selectedIcon:
                     Icon(Icons.account_balance, color: AppColors.primary),
                 label: 'Кредиты',
+              ),
+
+              NavigationDestination(
+                icon: Icon(Icons.savings_outlined),
+                selectedIcon: Icon(Icons.savings, color: AppColors.primary),
+                label: 'Депозиты',
               ),
 
               NavigationDestination(
