@@ -17,6 +17,13 @@ if (!$user || !password_verify($password, $user['password_hash'])) {
     jsonOut(401, 'Неверный телефон или пароль');
 }
 
+if (isset($user['is_blocked']) && (int)$user['is_blocked'] === 1) {
+    $reason = isset($user['blocked_reason']) ? trim((string)$user['blocked_reason']) : '';
+    jsonOut(403, $reason === ''
+        ? 'Аккаунт заблокирован администратором банка'
+        : 'Аккаунт заблокирован: ' . $reason);
+}
+
 $token = issueToken((int)$user['id']);
 
 jsonOut(200, 'Вход выполнен', array(
@@ -26,5 +33,6 @@ jsonOut(200, 'Вход выполнен', array(
         'full_name' => $user['full_name'],
         'phone'     => $user['phone'],
         'has_pin'   => $user['pin_hash'] !== null && $user['pin_hash'] !== '',
+        'is_admin'  => isAdminUser($user),
     ),
 ));

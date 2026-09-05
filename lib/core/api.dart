@@ -35,6 +35,9 @@ class Api {
   static const String notifications = 'notifications.php';
   static const String notificationsRead = 'notifications_read.php';
 
+  static const String employment = 'employment.php';
+  static const String employmentSave = 'employment_save.php';
+
   static const String creditors = 'creditors.php';
   static const String credits = 'credits.php';
   static const String creditCreate = 'credit_create.php';

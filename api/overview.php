@@ -25,6 +25,7 @@ jsonOut(200, 'OK', array(
         'full_name' => $user['full_name'],
         'phone'     => $user['phone'],
         'has_pin'   => $user['pin_hash'] !== null && $user['pin_hash'] !== '',
+        'is_admin'  => isAdminUser($user),
     ),
     'wallets'      => $wallets,
     'transactions' => $transactions,

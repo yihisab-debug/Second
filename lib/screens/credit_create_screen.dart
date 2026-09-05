@@ -5,9 +5,11 @@ import '../core/api.dart';
 import '../core/format.dart';
 import '../core/theme.dart';
 import '../models/credit_models.dart';
+import '../models/employment_models.dart';
 import '../models/models.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/wallet_selector.dart';
+import 'employment_screen.dart';
 
 class CreditCreateScreen extends StatefulWidget {
   final List<Creditor> creditors;
@@ -32,6 +34,10 @@ class _CreditCreateScreenState extends State<CreditCreateScreen> {
   late Creditor _creditor;
   late Wallet _wallet;
   late double _months;
+
+  CreditDecision _decision = CreditDecision.empty();
+  double _limit = 0;
+  bool _checking = true;
   bool _loading = false;
 
   @override
@@ -41,6 +47,37 @@ class _CreditCreateScreenState extends State<CreditCreateScreen> {
     _wallet = widget.wallets.first;
     _months = _creditor.minMonths.toDouble();
     _amountController.text = _creditor.minAmount.toStringAsFixed(0);
+    _checkEmployment();
+  }
+
+  Future<void> _checkEmployment() async {
+    if (mounted) setState(() => _checking = true);
+
+    try {
+      final data = await Api.call(Api.employment);
+      if (!mounted) return;
+      setState(() {
+        _decision = CreditDecision.from(data['decision']);
+        _limit = data['credit_limit'] is num
+            ? (data['credit_limit'] as num).toDouble()
+            : 0.0;
+        _checking = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _decision = CreditDecision(allowed: false, message: e.message);
+        _checking = false;
+      });
+    }
+  }
+
+  Future<void> _openEmployment() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const EmploymentScreen()),
+    );
+    if (mounted) _checkEmployment();
   }
 
   @override
@@ -69,6 +106,11 @@ class _CreditCreateScreenState extends State<CreditCreateScreen> {
 
   Future<void> _submit() async {
     final amount = _amount;
+
+    if (!_decision.allowed) {
+      showMessage(context, _decision.message, error: true);
+      return;
+    }
 
     if (amount < _creditor.minAmount || amount > _creditor.maxAmount) {
       showMessage(
@@ -139,6 +181,10 @@ class _CreditCreateScreenState extends State<CreditCreateScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+
+              _decisionCard(),
+
+              const SizedBox(height: 20),
 
               const Text(
                 'Кредитор',
@@ -337,14 +383,122 @@ class _CreditCreateScreenState extends State<CreditCreateScreen> {
               const SizedBox(height: 20),
 
               PrimaryButton(
-                label: 'Получить кредит',
-                loading: _loading,
-                onPressed: _submit,
+                label: _decision.allowed
+                    ? 'Получить кредит'
+                    : 'Кредит недоступен',
+                loading: _loading || _checking,
+                onPressed: _decision.allowed ? _submit : null,
               ),
 
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _decisionCard() {
+    if (_checking) {
+      return const AppCard(
+        child: Row(
+          children: [
+
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.2),
+            ),
+
+            SizedBox(width: 12),
+
+            Text(
+              'Проверяем статус занятости',
+              style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+            ),
+
+          ],
+        ),
+      );
+    }
+
+    final allowed = _decision.allowed;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: (allowed ? AppColors.income : AppColors.expense)
+            .withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(18),
+      ),
+
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+
+          Icon(
+            allowed ? Icons.verified_rounded : Icons.error_outline_rounded,
+            color: allowed ? AppColors.income : AppColors.expense,
+            size: 22,
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+
+                Text(
+                  allowed ? 'Кредит доступен' : 'Кредит не выдаётся',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: allowed ? AppColors.income : AppColors.expense,
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                Text(
+                  allowed
+                      ? 'Одобренная сумма — до '
+                          '${formatMoney(_limit, 'KZT', withCents: false)}'
+                      : _decision.message,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    color: AppColors.text,
+                  ),
+                ),
+
+                if (!allowed) ...[
+
+                  const SizedBox(height: 8),
+
+                  SizedBox(
+                    height: 40,
+                    child: OutlinedButton.icon(
+                      onPressed: _openEmployment,
+                      icon: const Icon(Icons.badge_outlined, size: 18),
+                      label: const Text('Указать занятость'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.expense,
+                        side: const BorderSide(color: AppColors.divider),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                ],
+
+              ],
+            ),
+          ),
+
+        ],
       ),
     );
   }

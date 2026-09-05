@@ -134,7 +134,29 @@ function currentUser()
     if (!$user) {
         jsonOut(401, 'Сессия истекла, войдите заново');
     }
+
+    if (isset($user['is_blocked']) && (int)$user['is_blocked'] === 1) {
+        $reason = isset($user['blocked_reason']) ? trim((string)$user['blocked_reason']) : '';
+        jsonOut(403, $reason === ''
+            ? 'Аккаунт заблокирован администратором банка'
+            : 'Аккаунт заблокирован: ' . $reason);
+    }
+
     $user['token'] = $token;
+    return $user;
+}
+
+function isAdminUser($user)
+{
+    return isset($user['is_admin']) && (int)$user['is_admin'] === 1;
+}
+
+function currentAdmin()
+{
+    $user = currentUser();
+    if (!isAdminUser($user)) {
+        jsonOut(403, 'Раздел доступен только администратору');
+    }
     return $user;
 }
 
@@ -275,6 +297,219 @@ function unreadNotificationsCount($userId)
     } catch (Exception $e) {
         return 0;
     }
+}
+
+function employmentStatuses()
+{
+    return array(
+        'employed' => array(
+            'label'         => 'Работаю официально',
+            'hint'          => 'Трудовой договор и стабильная зарплата',
+            'can_credit'    => 1,
+            'need_employer' => 1,
+            'min_income'    => 85000,
+            'min_months'    => 3,
+            'max_amount'    => 5000000,
+            'payment_part'  => 0.50,
+        ),
+        'self_employed' => array(
+            'label'         => 'ИП или самозанятый',
+            'hint'          => 'Свой бизнес, доход меняется по месяцам',
+            'can_credit'    => 1,
+            'need_employer' => 1,
+            'min_income'    => 120000,
+            'min_months'    => 6,
+            'max_amount'    => 3000000,
+            'payment_part'  => 0.40,
+        ),
+        'retired' => array(
+            'label'         => 'Пенсионер',
+            'hint'          => 'Получаю пенсию каждый месяц',
+            'can_credit'    => 1,
+            'need_employer' => 0,
+            'min_income'    => 60000,
+            'min_months'    => 0,
+            'max_amount'    => 1000000,
+            'payment_part'  => 0.35,
+        ),
+        'student' => array(
+            'label'         => 'Студент',
+            'hint'          => 'Учусь, есть стипендия или подработка',
+            'can_credit'    => 1,
+            'need_employer' => 0,
+            'min_income'    => 50000,
+            'min_months'    => 0,
+            'max_amount'    => 500000,
+            'payment_part'  => 0.30,
+        ),
+        'unemployed' => array(
+            'label'         => 'Временно не работаю',
+            'hint'          => 'Постоянного дохода сейчас нет',
+            'can_credit'    => 0,
+            'need_employer' => 0,
+            'min_income'    => 0,
+            'min_months'    => 0,
+            'max_amount'    => 0,
+            'payment_part'  => 0,
+        ),
+    );
+}
+
+function employmentStatus($code)
+{
+    $all  = employmentStatuses();
+    $code = (string)$code;
+    return isset($all[$code]) ? $all[$code] : null;
+}
+
+function toKzt($amount, $currency)
+{
+    switch (strtoupper((string)$currency)) {
+        case 'USD':
+            return round((float)$amount * 500, 2);
+        case 'EUR':
+            return round((float)$amount * 540, 2);
+        default:
+            return round((float)$amount, 2);
+    }
+}
+
+function moneyKzt($value)
+{
+    return number_format((float)$value, 0, ',', ' ') . ' ₸';
+}
+
+function employmentToArray($user)
+{
+    $code  = isset($user['employment_status']) ? (string)$user['employment_status'] : '';
+    $rules = employmentStatus($code);
+
+    return array(
+        'status'            => $rules === null ? '' : $code,
+        'status_label'      => $rules === null ? '' : $rules['label'],
+        'employer'          => isset($user['employer']) ? (string)$user['employer'] : '',
+        'monthly_income'    => isset($user['monthly_income']) ? (float)$user['monthly_income'] : 0.0,
+        'experience_months' => isset($user['experience_months']) ? (int)$user['experience_months'] : 0,
+        'is_filled'         => $rules !== null,
+        'can_credit'        => $rules !== null && (int)$rules['can_credit'] === 1,
+        'min_income'        => $rules === null ? 0.0 : (float)$rules['min_income'],
+        'min_months'        => $rules === null ? 0 : (int)$rules['min_months'],
+        'max_amount'        => $rules === null ? 0.0 : (float)$rules['max_amount'],
+        'payment_part'      => $rules === null ? 0.0 : (float)$rules['payment_part'],
+        'updated_at'        => isset($user['employment_at']) && $user['employment_at'] !== null
+            ? $user['employment_at']
+            : '',
+    );
+}
+
+function activeCreditsPayment($userId)
+{
+    try {
+        $st = db()->prepare(
+            'SELECT monthly_payment, currency FROM credits WHERE user_id = ? AND status = ?'
+        );
+        $st->execute(array((int)$userId, 'active'));
+
+        $total = 0;
+        foreach ($st->fetchAll() as $row) {
+            $total += toKzt($row['monthly_payment'], $row['currency']);
+        }
+        return round($total, 2);
+    } catch (Exception $e) {
+        return 0.0;
+    }
+}
+
+function creditLimit($user)
+{
+    $code  = isset($user['employment_status']) ? $user['employment_status'] : '';
+    $rules = employmentStatus($code);
+
+    if ($rules === null || (int)$rules['can_credit'] !== 1) {
+        return 0.0;
+    }
+
+    $income = isset($user['monthly_income']) ? (float)$user['monthly_income'] : 0.0;
+    $free   = round($income * $rules['payment_part'], 2) - activeCreditsPayment((int)$user['id']);
+
+    if ($free <= 0) {
+        return 0.0;
+    }
+
+    $byIncome = round($free * 12, 2);
+    return $byIncome < (float)$rules['max_amount'] ? $byIncome : (float)$rules['max_amount'];
+}
+
+function creditDecision($user, $amount, $monthlyPayment, $currency)
+{
+    $code  = isset($user['employment_status']) ? (string)$user['employment_status'] : '';
+    $rules = employmentStatus($code);
+
+    if ($rules === null) {
+        return array(
+            'allowed' => false,
+            'message' => 'Сначала укажите статус занятости в профиле, без него кредит не оформляется',
+        );
+    }
+
+    if ((int)$rules['can_credit'] !== 1) {
+        return array(
+            'allowed' => false,
+            'message' => 'Со статусом «' . $rules['label'] . '» банк кредит не выдаёт',
+        );
+    }
+
+    $income = isset($user['monthly_income']) ? (float)$user['monthly_income'] : 0.0;
+    if ($income < (float)$rules['min_income']) {
+        return array(
+            'allowed' => false,
+            'message' => 'Для статуса «' . $rules['label'] . '» нужен доход от '
+                . moneyKzt($rules['min_income']) . ' в месяц, а указано ' . moneyKzt($income),
+        );
+    }
+
+    $experience = isset($user['experience_months']) ? (int)$user['experience_months'] : 0;
+    if ($experience < (int)$rules['min_months']) {
+        return array(
+            'allowed' => false,
+            'message' => 'Нужен стаж от ' . (int)$rules['min_months']
+                . ' мес., а указано ' . $experience,
+        );
+    }
+
+    $amountKzt = toKzt($amount, $currency);
+    if ($amountKzt > (float)$rules['max_amount']) {
+        return array(
+            'allowed' => false,
+            'message' => 'Со статусом «' . $rules['label'] . '» максимальная сумма кредита — '
+                . moneyKzt($rules['max_amount']),
+        );
+    }
+
+    $payment = toKzt($monthlyPayment, $currency) + activeCreditsPayment((int)$user['id']);
+    $allowed = round($income * $rules['payment_part'], 2);
+
+    if ($payment > $allowed) {
+        return array(
+            'allowed' => false,
+            'message' => 'Платежи по кредитам составят ' . moneyKzt($payment)
+                . ' в месяц, а с вашим доходом банк одобряет до ' . moneyKzt($allowed),
+        );
+    }
+
+    return array(
+        'allowed' => true,
+        'message' => 'Кредит одобрен',
+    );
+}
+
+function requireCreditAllowed($user, $amount, $monthlyPayment, $currency)
+{
+    $decision = creditDecision($user, $amount, $monthlyPayment, $currency);
+    if (!$decision['allowed']) {
+        jsonOut(403, $decision['message']);
+    }
+    return $decision;
 }
 
 function requirePost()

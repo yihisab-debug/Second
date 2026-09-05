@@ -6,8 +6,10 @@ import '../core/format.dart';
 import '../core/phone.dart';
 import '../core/session.dart';
 import '../core/theme.dart';
+import '../models/employment_models.dart';
 import '../models/models.dart';
 import '../widgets/app_widgets.dart';
+import 'employment_screen.dart';
 import 'login_screen.dart';
 import 'pin_screen.dart';
 
@@ -20,6 +22,7 @@ class ProfileTab extends StatefulWidget {
 
 class _ProfileTabState extends State<ProfileTab> {
   List<Wallet> _wallets = <Wallet>[];
+  Employment _employment = Employment.empty();
   bool _loading = true;
 
   @override
@@ -31,9 +34,11 @@ class _ProfileTabState extends State<ProfileTab> {
   Future<void> _load() async {
     try {
       final data = await Api.call(Api.wallets);
+      final employmentData = await Api.call(Api.employment);
       if (!mounted) return;
       setState(() {
         _wallets = Wallet.listFrom(data['wallets']);
+        _employment = Employment.from(employmentData['employment']);
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -41,6 +46,14 @@ class _ProfileTabState extends State<ProfileTab> {
       setState(() => _loading = false);
       showMessage(context, e.message, error: true);
     }
+  }
+
+  Future<void> _openEmployment() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const EmploymentScreen()),
+    );
+    if (mounted) _load();
   }
 
   Future<void> _copy(String number) async {
@@ -348,6 +361,38 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
               ),
             ),
+
+          const SizedBox(height: 16),
+
+          const SectionTitle(title: 'Занятость'),
+
+          const SizedBox(height: 8),
+
+          AppCard(
+            padding: EdgeInsets.zero,
+            child: ListTile(
+              leading: Icon(
+                _employment.canCredit
+                    ? Icons.badge_outlined
+                    : Icons.work_off_outlined,
+                color: _employment.canCredit
+                    ? AppColors.income
+                    : AppColors.expense,
+              ),
+              title: Text(
+                _employment.isFilled
+                    ? _employment.statusLabel
+                    : 'Статус не указан',
+              ),
+              subtitle: Text(
+                _employment.canCredit
+                    ? 'Доход ${formatMoney(_employment.monthlyIncome, 'KZT', withCents: false)} · кредиты доступны'
+                    : 'Без статуса занятости кредит не выдаётся',
+              ),
+              trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+              onTap: _openEmployment,
+            ),
+          ),
 
           const SizedBox(height: 16),
 
